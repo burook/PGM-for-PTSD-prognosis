@@ -1,0 +1,269 @@
+---
+title: "1. Learn the network and do inference"
+output:
+  html_notebook:
+    toc: yes
+    toc_float: yes
+date: "June 12, 2019"
+---
+
+---
+```{r, echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+require(tidyverse)
+# includes the following packages: ggplot2, dplyr, tidyr, readr, purrr, tibble, stringr, forcats
+
+require(data.table)
+require(bnlearn)
+require(Rgraphviz)
+require(gRain)
+require(lattice)
+```
+
+
+```{r, echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+# location of processed data
+processed_data_loc <- "/Users/burook/Desktop/PGM_for_PTSD/data"
+
+```
+
+## Extract and prepare relevant variables
+
+```{r}
+
+PTSD_clinical <- read_delim(file.path(processed_data_loc, "PTSD_clinical.txt"),
+                             col_names = TRUE, delim = "\t");
+PTSD_molecular <- read_delim(file.path(processed_data_loc, "PTSD_molecular.txt"),
+                             col_names = TRUE, delim = "\t");
+
+PTSD_data_for_PGM <- PTSD_clinical %>% 
+  full_join(PTSD_molecular, by = "ID") %>%
+  select(ETISR_Total, DemoEdu, prs, BMI, Waist_to_Hip_Ratio, hscrp, PTSD_status) %>%
+  print()
+# some more varibles of interest
+# CAPSTOT_cur, DRRI_D_score, tl, elisa.npy, elisa.corsup, DemoGend, Pulse
+
+# remove 'Sub_threshold' samples
+PTSD_data_for_PGM %>% 
+  group_by(PTSD_status) %>% 
+  summarise(n=n()) %>% 
+  print()
+
+PTSD_data_for_PGM %>% 
+  filter(PTSD_status=="Positive" | PTSD_status=="Negative") %>% 
+  group_by(PTSD_status) %>% 
+  summarise(
+    n=n(),
+    mean_BMI = mean(BMI, na.rm = TRUE)) %>% 
+  print()
+
+```
+
+
+## Structure learning 
+
+```{r}
+# extract data for PGM
+data1 <- PTSD_data_for_PGM %>% 
+  na.omit() %>% 
+  mutate(PTSD_status = as.factor(PTSD_status)) %>% 
+  mutate(PTSD_status = as.numeric(PTSD_status)) %>% 
+  print()
+  
+# edges to 'prs' is not allowed
+# edges from 'PTSD_status' is not allowed
+# edges to CA is not allowed
+no_edges_allowed <- matrix(c("PTSD_status","DemoEdu","PTSD_status","BMI","PTSD_status","ETISR_Total","PTSD_status","prs","PTSD_status","Waist_to_Hip_Ratio","PTSD_status", "hscrp",
+                             "DemoEdu","prs","BMI","prs","ETISR_Total","prs","Waist_to_Hip_Ratio","prs", "hscrp","prs","PTSD_status","prs",
+                             "prs","ETISR_Total","DemoEdu","ETISR_Total"),
+                           ncol = 2, byrow = T)
+always_edges <- matrix(c("DemoEdu","PTSD_status"), ncol = 2, byrow = T)
+
+# constraint-based structure learning
+#net1 <- inter.iamb(data1, blacklist = no_edges_allowed)        
+# score-based structure learning
+net1 <- tabu(data1, blacklist = no_edges_allowed, score = "bic-g", optimized = T)
+
+net1
+```
+Let's plot thee graphical model.
+
+```{r}
+# highlighing edges: let's highlight edges directly connected to the response variable
+hedges <- list(arcs=c("ETISR_Total", "PTSD_status", "DemoEdu", "PTSD_status","hscrp", "PTSD_status"), 
+               col="blue")
+
+# highlighting nodes: let's highlight the response variable
+hnodes <- list(nodes=c("PTSD_status"), 
+               fill="grey", 
+               col="blue", 
+               textCol="red",arcs=c("ETISR_Total", "PTSD_status", "DemoEdu", "PTSD_status","hscrp", "PTSD_status"))
+p1 <- graphviz.plot(net1, highlight = hnodes)
+
+```
+
+Here is the same graph in a better looking format.
+
+```{r}
+knitr::include_graphics("/Users/burook/Desktop/PGM_for_PTSD/figures_and_tables/figure4_no_bdnf.png")
+```
+
+## Parameter learning
+
+```{r}
+# First, let's do discretization into binary variables 
+# (Besides facilitating interpretation, discretization is necessary for exact inference. Query is done with the gRain package).
+library(arules)   # a package for discretization
+data1 %>% 
+  summary()
+data2 <- data1 %>% 
+  discretizeDF(default = list(method = "interval", breaks = 2, labels = c("low", "high"))) %>%
+  print()
+data2 %>% 
+  summary() %>% 
+  print()
+
+```
+
+For some of the variables, the equal interval binarization does not make sense (i.e. too many samples just in one group). So, let's use a more sensible discretization threshold. Note that the same discretization thresholds will be used in the validation cohort.
+
+```{r}
+# ETISR_Total (Childhood Adversity, CA)
+hist(data1$ETISR_Total); table(data2$ETISR_Total)
+data2$ETISR_Total <- as.numeric(cut(data1$ETISR_Total, breaks = c(0,5,22), include.lowest=T))
+table(data2$ETISR_Total)
+```
+```{r}
+# DemoEdu (Educational Attainment, EA)
+hist(data1$DemoEdu); table(data2$DemoEdu)
+data2$DemoEdu <- as.numeric(cut(data1$DemoEdu, breaks = c(0,3,6), include.lowest=T))
+table(data2$DemoEdu)
+```
+
+```{r}
+# PRS (Polygenic Risk Score)
+hist(data1$prs); table(data2$prs)
+data2$prs <- as.numeric(cut(data1$prs, breaks = quantile(data1$prs, probs = seq(0, 1, 1/2)), include.lowest=T))
+table(data2$prs)
+```
+
+```{r}
+# BMI (Body Mass Index)
+hist(data1$BMI); table(data2$BMI)
+data2$BMI <- as.numeric(cut(data1$BMI, breaks = quantile(data1$BMI, probs = seq(0, 1, 1/2)), include.lowest=T)) # equal frequency binning
+#data2$BMI <- as.numeric(cut(data1$BMI, breaks = c(0,25,50), include.lowest=T))  # I(BMI>25), i.e. obese or not
+table(data2$BMI)
+```
+
+```{r}
+# Waist_to_Hip_Ratio (WHR)
+hist(data1$Waist_to_Hip_Ratio); table(data2$Waist_to_Hip_Ratio)
+data2$Waist_to_Hip_Ratio <- as.numeric(cut(data1$Waist_to_Hip_Ratio, breaks = quantile(data1$Waist_to_Hip_Ratio, probs = seq(0, 1, 1/2)), include.lowest=T)) # equal frequency binning
+#data2$Waist_to_Hip_Ratio <- as.numeric(cut(data1$Waist_to_Hip_Ratio, breaks = c(0,1,5), include.lowest=T))  # I(ratio>1), i.e. obese or not
+table(data2$Waist_to_Hip_Ratio)
+```
+
+```{r}
+# hscrp (CRP blood concentration)
+hist(data1$hscrp); table(data2$hscrp)
+data2$hscrp <- as.numeric(cut(data1$hscrp, breaks = quantile(data1$hscrp, probs = seq(0, 1, 1/2)), include.lowest=T))
+table(data2$hscrp)
+```
+
+```{r}
+## now let's relabel variables as 'high' and 'low'
+data2 <- discretizeDF(data2, default = list(method = "interval", breaks = 2, labels = c("low", "high")))
+```
+
+```{r}
+# partitioning into training and testing
+set.seed(1717); # for reproducibility
+inTrain <- sample(1:nrow(data2), floor(0.8*nrow(data2)))
+data2.train <- data2[inTrain,]
+data2.test <- data2[-inTrain,]
+```
+
+```{r}
+# fitting the parameters
+net2 <- bn.fit(net1, as.data.frame(data2.train), method = "mle")
+
+# visualizing some of the parameters
+# bn.fit.barchart(net2$Waist_to_Hip_Ratio,ylab = "Waist_to_Hip_Ratio")
+ bn.fit.barchart(net2$BMI,ylab = "BMI")
+# bn.fit.barchart(net2$DemoEdu,ylab = "DemoEdu")
+# bn.fit.barchart(net2$PTSD_status,ylab = "PTSD_status")
+```
+
+## Inference and query
+
+```{r}
+#### inference is done with gRain package
+# convert the model to gRain package
+net2g <- as.grain(net2)
+# need to compile it to do inference
+net2c <- compile(net2g, propagate = TRUE)
+
+
+# let's write a small function to easily compute a performance for a given data set
+compute_performance <- function(net2c, data2.test) {
+  require(pROC) # AUC computation
+  require(survival) # for C-index computation
+  
+  prob.of.PTSD <- double(length = nrow(data2.test))
+  for (i in 1:nrow(data2.test)) {
+    y.pred <- predict(net2c,
+                      response = "PTSD_status",
+                      newdata=data2.test[i,!(colnames(data2.test)%in%c("PTSD_status"))],
+                      predictors = colnames(data2.test[i,!(colnames(data2.test)%in%c("PTSD_status"))]),
+                      type= "distribution")
+    prob.of.PTSD[i] <- y.pred$pred$PTSD_status[,"high"]
+  }
+  
+  # compute AUC of ROC
+  pROC_obj <- pROC::roc(as.factor(data2.test$PTSD_status), 
+                        prob.of.PTSD,
+                        # arguments for ci
+                        ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+                        # arguments for plot
+                        plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+                        print.auc=TRUE, show.thres=TRUE)
+  pROC_obj$auc
+  
+  # sens.ci <- ci.se(pROC_obj)
+  # plot(sens.ci, type="shape", col="lightblue")
+  ## Warning in plot.ci.se(sens.ci, type = "shape", col = "lightblue"): Low
+  ## definition shape.
+  # plot(sens.ci, type="bars")
+  
+  # compute C-index
+  #summary(coxph(Surv(as.numeric(prob.of.PTSD))~data2.test$CAPSTOT_cut))$concordance["C"]
+}
+
+```
+
+```{r}
+# performace on training and testing subcohorts
+compute_performance(net2c, data2.train); 
+compute_performance(net2c, data2.test); 
+```
+
+Marginal probabilities of the response variable in the model.
+```{r}
+querygrain((net2c), nodes = "PTSD_status", type = "marginal")
+```
+
+Now let’s inquire probabilities of PTSD for a given combination of predictor variables. 
+Probability of PTSD for a person with high levels of CRP, PRS and BMI:
+```{r}
+querygrain(setEvidence(net2c, evidence=list("hscrp"="high", "prs"="high", "BMI"="high")), nodes = "PTSD_status", type = "marginal")
+```
+
+What if we also know that CA is high as well:
+```{r}
+querygrain(setEvidence(net2c, evidence=list("hscrp"="high", "prs"="high", "BMI"="high","ETISR_Total"="high")), nodes = "PTSD_status", type = "marginal")
+```
+
+What if we instead know that CA is low:
+```{r}
+querygrain(setEvidence(net2c, evidence=list("hscrp"="high", "prs"="high", "BMI"="high","ETISR_Total"="low")), nodes = "PTSD_status", type = "marginal")
+```
+

@@ -1,0 +1,350 @@
+---
+title: "Preprocessing SysBio Data"
+output:
+  html_notebook:
+    toc: yes
+    toc_float: yes
+date: "June 7, 2019"
+---
+
+---
+```{r, echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+require(tidyverse)
+# includes the following packages: ggplot2, dplyr, tidyr, readr, purrr, tibble, stringr, forcats
+
+require(data.table)
+require(readxl)
+```
+
+
+```{r, echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+# location of raw data
+raw_data_loc_clin <- "/Users/burook/Desktop/data_raw/sb_data/clinical_and_demographic_data"
+raw_data_loc_molec <- "/Users/burook/Desktop/data_raw/sb_data/clinicalLab"
+# location of processed data
+processed_data_loc <- "/Users/burook/Desktop/PGM_for_PTSD/data"
+```
+
+
+### Scored data
+(includes CAPS, PTSD severity score, as well as diagnosis label)
+
+```{r}
+
+PTSD_clinical1 <- read_delim(file.path(raw_data_loc_clin,"Male/Original_Male_83_83_Clinical_ScoredData_NYU_032917.txt"),
+                             col_names = TRUE, delim = "\t",
+                             col_types = cols(ID = col_character()));
+PTSD_clinical2 <- read_delim(file.path(raw_data_loc_clin,"Male/Validation_Male_Clinical_ScoredData_NYU_033117.txt"),
+                             col_names = TRUE, delim = "\t",
+                             col_types = cols(ID = col_character()));
+
+# Let's label the recall data manually. For the other datasets below, this need not be done since timeP/date is available.
+x1 = intersect(PTSD_clinical1[["ID"]],PTSD_clinical2[["ID"]])
+i_x1 = match(x1,PTSD_clinical2[["ID"]])
+PTSD_clinical2[i_x1,"ID"] = paste(x1,'R',sep = "")
+
+# Now add the female participants
+PTSD_clinicalf <- read_delim(file.path(raw_data_loc_clin,"Female/Original_Female_Clinical_ScoredData_NYU_032917.txt"),
+                             col_names = TRUE, delim = "\t",
+                             col_types = cols(ID = col_character()));
+
+PTSD_clinicalScored <- bind_rows(PTSD_clinical1, PTSD_clinical2, PTSD_clinicalf);
+
+# CAPSTOT_LT is not computed, so we have to compute it from its components
+PTSD_clinicalScored <- PTSD_clinicalScored %>% 
+  mutate(CAPSTOT_LT = CAPSB_LT + CAPSC_LT + CAPSD_LT)
+# the above line can be shortened as (COOL!)
+#PTSD_clinicalScored %<>% mutate(CAPSTOT_LT = CAPSB_LT + CAPSC_LT + CAPSD_LT)
+```
+
+### Demographic data
+(inludes ethnicity)
+
+```{r}
+
+PTSD_clinical1 <- read_delim(file.path(raw_data_loc_clin,"Male/Original-Male_83_83_Clinical_Bio_Background_NYU_120116.txt"),
+                             col_names = TRUE, delim = "\t",
+                             col_types = cols(ID = col_character()));
+
+PTSD_clinical2 <- read_delim(file.path(raw_data_loc_clin,"Male/Validation-Male_Clinical_Valid_Bio_Background_NYU_051217.txt"),
+                             col_names = TRUE, delim = "\t",
+                             col_types = cols(ID = col_character()));
+
+# Let's label the recall data manually. 
+x1 = intersect(PTSD_clinical1$ID,PTSD_clinical2$ID)
+i_x1 = match(x1,PTSD_clinical2$ID)
+PTSD_clinical2[i_x1,"ID"] = paste(x1,'R',sep = "")
+
+# Now add the female participants
+PTSD_clinicalf <- read_delim(file.path(raw_data_loc_clin,"Female/Original-Female_Clinical_Bio_Background_NYU_120116.txt"),
+                             col_names = TRUE, delim = "\t",
+                             col_types = cols(ID = col_character()));
+
+PTSD_clinicalBio <- bind_rows(PTSD_clinical1, PTSD_clinical2, PTSD_clinicalf);
+
+# Race/ethnicity info is recorded in 6 columns each with a yes or no question. Let's represent race/ethnicity info in a single column with entries consisting of the different race/ethnicity labels.
+# Eth_race_choices <- as.vector(c("DemoEth_Hispanic", "DemoEth_Asian", "DemoEth_Black", "DemoEth_White", "DemoEth_NativeAm", "DemoEth_Other"));
+# i = (PTSD_clinicalBio[Eth_race_choices]); 
+# Eth_race = apply(i, 1, function(x) {if (x["DemoEth_Hispanic"]==1) return("Hispanic")
+#   else if (x["DemoEth_Asian"]==1) return("Asian")
+#   else if (x["DemoEth_Black"]==1) return("Black")
+#   else if (x["DemoEth_White"]==1) return("White")
+#   else if (x["DemoEth_NativeAm"]==1) return("NativeAm")
+#   else if (x["DemoEth_Other"]==1) return("Other")
+#   else return("Other")
+# });
+# Eth_race = unlist(Eth_race);
+# # Now add the ethnicity of each sample as an additional column
+# PTSD_clinicalBio = cbind(PTSD_clinicalBio, Eth_race);
+
+# the above code chunck can be shortened using tidyversee!
+PTSD_clinicalBio <- PTSD_clinicalBio %>% 
+  mutate(Eth_race = "None") %>% 
+  mutate(Eth_race = replace(Eth_race, DemoEth_Hispanic==1, "Hispanic")) %>% 
+  mutate(Eth_race = replace(Eth_race, DemoEth_White==1, "White")) %>% 
+  mutate(Eth_race = replace(Eth_race, DemoEth_Black==1, "Black")) %>% 
+  mutate(Eth_race = replace(Eth_race, DemoEth_Asian==1, "Asian")) %>% 
+  mutate(Eth_race = replace(Eth_race, DemoEth_NativeAm==1, "NativeAm")) %>% 
+  mutate(Eth_race = replace(Eth_race, DemoEth_Other==1, "Other"))
+
+```
+
+
+### Anthropometric Measurements
+(includes BMI)
+
+```{r}
+PTSD_clinical1 <- read_delim(file.path(raw_data_loc_clin,"Male/Original-Male_83_83_Clinical_Bio_ABM_NYU_120116.txt"),
+                             col_names = TRUE, delim = "\t",
+                             col_types = cols(.default = col_number(),ID = col_character(), Date = col_datetime(format = "%m/%d/%Y %H:%M:%S")));
+# row number 89 and 90 are duplicates, let's remove one of them
+PTSD_clinical1 <- PTSD_clinical1[!(duplicated(PTSD_clinical1[,"ID"])),]
+
+PTSD_clinical2 <- read_delim(file.path(raw_data_loc_clin,"Male/Validation_Male_Clinical_Valid_Bio_ABM_NYU_033117.txt"),
+                             col_names = TRUE, delim = "\t",
+                             col_types = cols(.default = col_number(),ID = col_character(), Date = col_datetime(format = "%m/%d/%Y %H:%M:%S")));
+
+# Let's label the recall data manually. For the other datasets below, this need not be done since timeP/date is available.
+x1 = intersect(PTSD_clinical1$ID,PTSD_clinical2$ID)
+i_x1 = match(x1,PTSD_clinical2$ID)
+PTSD_clinical2[i_x1,"ID"] = paste(x1,'R',sep = "")
+
+# Now add the female participants
+PTSD_clinicalf <- read_delim(file.path(raw_data_loc_clin,"Female/Original-Female_Clinical_Bio_ABM_NYU_120116.txt"),
+                             col_names = TRUE, delim = "\t",
+                             col_types = cols(.default = col_number(),ID = col_character(), Date = col_datetime(format = "%m/%d/%Y %H:%M:%S")));
+
+PTSD_clinicalABM <- bind_rows(PTSD_clinical1, PTSD_clinical2, PTSD_clinicalf);
+
+# calculate standing height in centi meters
+PTSD_clinicalABM$ABM3C = (12*PTSD_clinicalABM$ABM3A+PTSD_clinicalABM$ABM3B)*2.54
+
+# now let's rename columns
+annot1 <- read_excel(file.path(raw_data_loc_clin,"Male/Validation_Male_Clinical_RawDataDictionary_NYU_033117.xlsx"), 
+                     sheet = "Bio_ABM")
+
+annot1 <- annot1 %>%
+  slice(-c(1:3)) %>%
+  select(c("Variable Name","Variable Description")) %>%
+  rename_all(~c("old_name","new_name_desc")) %>%
+  mutate(new_name = str_extract(new_name_desc, "[^.]*$")) %>%
+  mutate(new_name = str_trim(new_name)) %>% 
+  mutate(new_name = str_replace_all(new_name, " ", "_")) %>%
+  print()
+
+PTSD_clinicalABM <- PTSD_clinicalABM %>%
+  rename_at(vars(annot1[["old_name"]]), ~annot1[["new_name"]])
+
+# some col names are duplicates (corresponding to feet and inches).
+# we don't need them for now, so let's just remove them both.
+PTSD_clinicalABM <- PTSD_clinicalABM[, !duplicated(colnames(PTSD_clinicalABM))]
+```
+
+Now merge the various phenotypic tables into one (single sample per row)
+```{r}
+PTSD_clinical <- PTSD_clinicalScored %>%
+  full_join(PTSD_clinicalBio, by="ID") %>%
+  full_join(PTSD_clinicalABM,by="ID") %>%
+  print()
+
+write.table(PTSD_clinical, file = file.path(processed_data_loc, "PTSD_clinical.txt"), 
+            sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+
+### Molecular datasets
+(includes BDNF)
+
+The original male file contains multiple kinds of molecular data for the original 83/83 cohort. Hence, corresponding columns need to be merged with the ones from validation, recall and female cohorts. First, let's load the original male molecular data.
+
+```{r}
+Original_Male_RawData <- read_delim(file.path(raw_data_loc_molec,"Original-Male_RawData_UCSF_032716.txt"),
+                                    col_names = TRUE, delim = "\t",
+                                    col_types = cols(id = col_character()));
+```
+
+#### BDNF conc. (ng/ml)
+
+```{r}
+PTSD_bdnfF <- read_delim(file.path(raw_data_loc_molec,"Original_Female_BDNF_UCSF_6072017.txt"),
+                         col_names = TRUE, delim = "\t",
+                         col_types = cols(id = col_character()));
+PTSD_bdnfV <- read_delim(file.path(raw_data_loc_molec,"Validation_male_BDNF_UCSF_6072017.txt"),
+                         col_names = TRUE, delim = "\t",
+                         col_types = cols(id = col_character()));
+PTSD_bdnfR <- read_delim(file.path(raw_data_loc_molec,"Validation_Recall_BNDF_UCSF_6072017.txt"),
+                         col_names = TRUE, delim = "\t",
+                         col_types = cols(id = col_character()));
+# rename recall data
+PTSD_bdnfR[["id"]] = paste(PTSD_bdnfR[["id"]],'R',sep = "")
+
+PTSD_bdnf <- PTSD_bdnfF %>%
+  bind_rows(PTSD_bdnfV) %>%
+  bind_rows(PTSD_bdnfR)
+# rename the bdnf column so as it becomes the same as the original male cohort
+colnames(PTSD_bdnf) <- gsub(" \\(.*","",colnames(PTSD_bdnf))  # change "bdnf (ng/ml)" to "bdnf"
+
+# now merge it with original male data, 
+# and let's capitalize the col name ID to make it consistent with other datasets
+PTSD_bdnf_all_samples <- PTSD_bdnf %>%
+  bind_rows(Original_Male_RawData[,colnames(PTSD_bdnf)]) %>%
+  rename_at(vars(id), ~"ID") %>%
+  print()
+```
+
+
+#### cell aging
+
+```{r}
+PTSD_immuneF <- read_delim(file.path(raw_data_loc_molec,"Original_Female_cellaging_UCSF_07032017.txt"),
+                           col_names = TRUE, delim = "\t",
+                           col_types = cols(id = col_character()));
+PTSD_immuneM <- read_delim(file.path(raw_data_loc_molec,"Original_Newrecruits_cellaging_UCSF_07032017.txt"),
+                           col_names = TRUE, delim = "\t",
+                           col_types = cols(id = col_character()));
+PTSD_immuneR <- read_delim(file.path(raw_data_loc_molec,"Original_Recalls_cellaging_UCSF_07032017.txt"),
+                           col_names = TRUE, delim = "\t",
+                           col_types = cols(id = col_character()));
+# rename recall data
+PTSD_immuneR[["id"]] = paste(PTSD_immuneR[["id"]],'R',sep = "")
+
+# now merge it with original male data, 
+# and let's capitalize the col name ID to make it consistent with other datasets
+PTSD_CellAging  <- PTSD_immuneF %>%
+  bind_rows(PTSD_immuneM) %>%
+  bind_rows(PTSD_immuneR) %>%
+  bind_rows(Original_Male_RawData[,colnames(PTSD_immuneM)]) %>%
+  rename_at(vars(id), ~"ID") %>%
+  print()
+```
+
+#### Endocrine_Blood
+
+```{r}
+PTSD_immuneF <- read_delim(file.path(raw_data_loc_molec,"Original_Female_Endocrine_Blood_MSSM_2017.04.21.txt"),
+                           col_names = TRUE, delim = "\t",
+                           col_types = cols(ID = col_character()));
+PTSD_immuneM <- read_delim(file.path(raw_data_loc_molec,"Original_Male_83_83_Endocrine_Blood_MSSM_2017.04.21.txt"),
+                           col_names = TRUE, delim = "\t",
+                           col_types = cols(ID = col_character()));
+PTSD_immuneR <- read_delim(file.path(raw_data_loc_molec,"Validation_Male_Endocrine_Blood_MSSM_04.21.2017.txt"),
+                           col_names = TRUE, delim = "\t",
+                           col_types = cols(ID = col_character()));
+# Let's label the recall data manually. 
+x1 = intersect(PTSD_immuneM[["ID"]],PTSD_immuneR[["ID"]])
+i_x1 = match(x1,PTSD_immuneR[["ID"]])
+PTSD_immuneR[i_x1,"ID"] = paste(x1,'R',sep = "")
+
+PTSD_Endocrine_Blood <- PTSD_immuneF %>%
+  bind_rows(PTSD_immuneM) %>%
+  bind_rows(PTSD_immuneR) %>%
+  filter(!is.na(ID)) %>%        # delete empty rows
+  print()
+```
+
+
+##### Clinical Lab CLIA
+
+```{r}
+PTSD_immuneF <- read_delim(file.path(raw_data_loc_molec,"Original_Female_Clinical_CLIA_MSSM_2017.04.21.txt"),
+                           col_names = TRUE, delim = "\t",
+                           col_types = cols(ID = col_character()));
+PTSD_immuneM <- read_delim(file.path(raw_data_loc_molec,"Original_Male_83_83_Clinical_CLIA_MSSM_2017.04.21.txt"),
+                           col_names = TRUE, delim = "\t",
+                           col_types = cols(ID = col_character()));
+PTSD_immuneR <- read_delim(file.path(raw_data_loc_molec,"Validation_Male_Clinical_CLIA_MSSM_2017.04.21.txt"),
+                           col_names = TRUE, delim = "\t",
+                           col_types = cols(ID = col_character()));
+
+# Let's label the recall data manually. 
+x1 = intersect(PTSD_immuneM[["ID"]],PTSD_immuneR[["ID"]])
+i_x1 = match(x1,PTSD_immuneR[["ID"]])
+PTSD_immuneR[i_x1,"ID"] = paste(x1,'R',sep = "")
+
+# the 'egfraa' column is creating a problem, so delete it for now
+PTSD_immuneM <- PTSD_immuneM[, !(colnames(PTSD_immuneM) %in% c("egfraa","egfrnaa"))]
+
+PTSD_Clinical_CLIA <- PTSD_immuneF %>%
+  bind_rows(PTSD_immuneM) %>%
+  bind_rows(PTSD_immuneR) %>%
+  filter(!is.na(ID)) %>%
+  print()
+```
+
+
+##### Flow Cytometry data
+
+```{r}
+
+PTSD_immuneF <- read.table(file.path(raw_data_loc_molec,"Original_Female_FlowCytometry_UCSF_06012017.txt"), 
+                           fileEncoding = "UTF-16LE", header = TRUE, fill = TRUE,sep = "\t"); PTSD_immuneF$id <- as.character(PTSD_immuneF$id)
+# remove problematic rows
+PTSD_immuneF <- PTSD_immuneF[!(PTSD_immuneF[,"id"]%in%c("201435","201437","202001","202129","80.1","202151","202242")),]
+PTSD_immuneV <- read.table(file.path(raw_data_loc_molec,"Validation_Male_FlowCytometry_UCSF_06012017.txt"), 
+                           fileEncoding = "UTF-16LE", header = TRUE, fill = TRUE,sep = "\t"); PTSD_immuneV$id <- as.character(PTSD_immuneV$id)
+PTSD_immuneR <- read.table(file.path(raw_data_loc_molec,"Validation_Recall_FlowCytometry_UCSF_06012017.txt"), 
+                           fileEncoding = "UTF-16LE", header = TRUE, fill = TRUE,sep = "\t"); PTSD_immuneR$id <- as.character(PTSD_immuneR$id)
+# rename recall data
+PTSD_immuneR[,"id"] = paste(PTSD_immuneR[,"id"],'R',sep = "")
+
+PTSD_immuneF <- subset(PTSD_immuneF, select=-c(epc_notes,lat_flow_notes))
+PTSD_immuneV <- subset(PTSD_immuneV, select=-c(epc_notes,lat_flow_notes))
+PTSD_immuneR <- subset(PTSD_immuneR, select=-c(epc_notes,lat_flow_notes))
+
+PTSD_FlowCytometry <- PTSD_immuneF %>%
+  bind_rows(PTSD_immuneV) %>%
+  bind_rows(PTSD_immuneR) %>%
+#  bind_rows(Original_Male_RawData[,colnames(PTSD_immuneR)]) %>%
+# the above line doesn't work because there is some mismatch, so let's do it the long way
+  bind_rows(Original_Male_RawData[,colnames(PTSD_immuneR)[colnames(PTSD_immuneR)%in%colnames(Original_Male_RawData)]]) %>%
+  rename_at(vars(id), ~"ID") %>%
+  print()
+
+```
+
+
+##### PRS data
+
+```{r}
+# first read the prs data
+prs1 <- read_delim("/Users/burook/Desktop/data_raw/sb_data/ptsd_C5_All_cohort_274/ptsd_SCORES_AT_BEST-FIT-PRS.txt",
+                   col_names = TRUE, delim = " ",
+                   col_types = cols(IID = col_character()));
+colnames(prs1) <- c("ID","prs")
+# prs1[,2] <- scale(prs1[,2],center=T,scale=T);  # z-score normalization
+```
+
+Now let's merge all molecular data and save it in the current working directory.
+
+```{r}
+PTSD_molecular <- PTSD_bdnf_all_samples %>%
+  full_join(PTSD_CellAging, by="ID") %>%
+  full_join(PTSD_Endocrine_Blood, by="ID") %>%
+  full_join(PTSD_Clinical_CLIA, by="ID") %>%
+  full_join(PTSD_FlowCytometry, by="ID") %>%
+  full_join(prs1, by="ID") %>%
+  print()
+
+write.table(PTSD_molecular, file = file.path(processed_data_loc, "PTSD_molecular.txt"), 
+            sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+```

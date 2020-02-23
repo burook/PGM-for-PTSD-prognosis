@@ -1,0 +1,179 @@
+---
+title: "Preprocessing FC Data"
+output:
+  html_notebook:
+    toc: yes
+    toc_float: yes
+date: "July 15, 2019"
+---
+
+We use the Fort Campbell (FC) cohort for validation of the model trained in the SysBio cohort. 
+Here we prepare and clean this cohort in the same manner as the training cohort.
+---
+```{r, echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+library(readxl)
+library(tidyr)
+```
+
+
+```{r, echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+# location of raw data
+raw_data_loc_clin_fc <- "/Users/burook/Desktop/data_raw/fc_data/clinical"
+
+raw_data_loc_molec <- ""
+# location of processed data
+processed_data_loc <- "/Users/burook/Desktop/PGM_for_PTSD/data"
+
+```
+
+
+```{r}
+# load and merge pheno data
+# contains EDU info, gender, race
+demo123 <- read_excel(file.path(raw_data_loc_clin_fc,"FC_T1_T2_T3_Demographics.xlsx"))
+# PCL and other scored data
+scoredT3 <- read_delim(file.path(raw_data_loc_clin_fc,"FC_T3_SR_ScoredData.csv"),
+                             col_names = TRUE, delim = ",")
+# weight, height and other body measurements
+vital123 <- read_excel(file.path(raw_data_loc_clin_fc,"FC_T1_T2_T3_Vital_Signs_Adjusted_H_W.xlsx"))
+
+
+# Samples with no PCL score at T3 are not useful, so exclude them.
+# And merge the three datasets. 
+# determine PTSD status with a PCL threshold
+FC_pheno_data <- scoredT3 %>% 
+  full_join(demo123, by ="ID") %>% 
+  full_join(vital123, by = "ID") %>% 
+  filter(!is.na(PCL_score)) %>% 
+  mutate(PTSD_status = ifelse(PCL_score>30, "Positive", "Negative")) %>% 
+  mutate(PTSD_status = as.factor(PTSD_status)) %>% 
+  print()
+
+FC_pheno_data %>% 
+  group_by(PTSD_status) %>% 
+  summarise(
+    n=n(),
+    mean_PCL = mean(PCL_score, na.rm = TRUE)) %>% 
+  print()
+```
+
+We have to compute some predictor variables used in the predictor variables (CA, EA and BMI). 
+```{r}
+# Calculate total childhood abuse score.
+# Create only four categories of childhood trauma (CA).
+FC_pheno_data <- FC_pheno_data %>% 
+  mutate(CTQ_total_abuse_score = CTQ_emotional_abuse_score + CTQ_physical_abuse_score + CTQ_sexual_abuse_score) %>% 
+  mutate(CA4 = as.numeric(cut(CTQ_total_abuse_score, breaks = c(0,20,30,40,60), include.lowest=T))) 
+
+FC_pheno_data %>% 
+  group_by(CA4) %>% 
+  summarise(
+    n=n(),
+    mean_CTQ = mean(CTQ_total_abuse_score, na.rm = TRUE)) %>% 
+  print()
+```
+
+```{r}
+# create only four categories of education
+# Originally 6 EA categories are surveyed. 
+# Since there are very few samples in the two extreme categories, these two categories are merged with their nearest categories. (Similar criteria with the training cohort.)
+FC_pheno_data <- FC_pheno_data %>% 
+  mutate(EA4 = as.numeric(cut(FC_pheno_data$EDUCATION_LEVEL, breaks = c(1,2,3,4,6), right=T))) 
+
+FC_pheno_data %>% 
+  group_by(EA4) %>% 
+  summarise(
+    n=n(),
+    mean_PCL = mean(PCL_score, na.rm = TRUE)) %>% 
+  print()
+```
+
+```{r}
+# merge pheno and prs data
+# first read the prs data (computed in the same manne and parameters as in the training cohort)
+prs1 <- read_delim("/Users/burook/Desktop/data_raw/fc_data/ptsd_FC_C5_pt_2/ptsd_SCORES_AT_BEST-FIT-PRS.txt",
+                   col_names = TRUE, delim = " ",
+                   col_types = cols(IID = col_character()));
+colnames(prs1) <- c("IID","prs")
+# prs1[,2]=scale(prs1[,2],center=T,scale=T);
+```
+
+```{r}
+# trim the extra characters in the sample names of the prs data
+# and merge it with pheno data
+FC_pheno_data <- prs1 %>% 
+  mutate(ID = as.numeric(as.matrix(as.data.frame(strsplit(as.character(IID),"-"))[2,]))) %>% 
+  full_join(FC_pheno_data, by = "ID") %>% 
+  print()
+
+# compute BMI and WHR
+FC_pheno_data <- FC_pheno_data %>%
+  mutate(BMI = 703*(ADJUSTED_T3_WEIGHT)/(ADJUSTED_HEIGHT)^2) %>%    
+  # Note: BMI = (weight,kg)/(height, m)^2 = 703*(weight,lb)/(height, in)^2
+  mutate(WHR = T3_WAIST/T3_HIP) %>% 
+  print()
+
+```
+
+```{r}
+# if excluding samples with sub-threshold ptsd symptoms at t3, run the following
+# FC_pheno_data %>% 
+#   filter((PCL_score<10) | (PCL_score>30)) %>% 
+#   print()
+
+FC_pheno_data %>% 
+  group_by(PTSD_status) %>% 
+  summarise(n=n(),
+    mean_PCL = mean(PCL_score, na.rm = TRUE),
+    mean_DDRI = mean(DRRI_D_score, na.rm = TRUE),
+    mean_BMI = mean(BMI, na.rm = TRUE),
+    mean_WHR = mean(WHR, na.rm = TRUE),
+    mean_CA = mean(CTQ_total_abuse_score, na.rm = TRUE),
+    mean_PRS = mean(prs, na.rm=TRUE)) %>% 
+  print()
+
+FC_pheno_data %>% 
+  filter(BMI<35) %>%      # remove outliers
+  ggplot(mapping = aes(x = PTSD_status, y = BMI)) +
+  geom_boxplot()
+
+FC_pheno_data %>% 
+  ggplot(mapping = aes(x = PTSD_status, y = PCL_score)) +
+  geom_boxplot()
+```
+
+
+```{r}
+FC_T3_LabCorp <- read_delim(file.path(raw_data_loc_clin_fc,"FC_T3_LabCorp.csv"),
+                             col_names = TRUE, delim = ",")
+
+FC_data_for_PGM <- FC_T3_LabCorp %>% 
+  filter(!is.na(Result) & !is.na(ID)) %>% 
+  filter(!is.na(Analyte_Component_Name)) %>% 
+  filter(Analyte_Component_Name == "C-Reactive Protein, Cardiac") %>% 
+  select(ID, Test_, Units, Received_Date_Time, Analyte_Component_Name, Result) %>% 
+  spread(Analyte_Component_Name, Result) %>% 
+  filter(!duplicated(ID)) %>% 
+#  filter(ID %in% c(931,1204,1524,1655)) %>% 
+#  print()
+  full_join(FC_pheno_data, by = "ID") %>% 
+  mutate(CRP = ifelse(`C-Reactive Protein, Cardiac`=="<0.10", 0.1, as.numeric(`C-Reactive Protein, Cardiac`))) %>% 
+#  filter((PCL_score<1) | (PCL_score>30)) %>%       # if we are removing controls with some symptoms
+  filter(CRP<10) %>%      # remove outliers
+  print()
+
+write.table(FC_data_for_PGM, file = file.path(processed_data_loc, "FC_data_for_PGM.txt"), 
+            sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+
+FC_data_for_PGM %>% 
+  group_by(PTSD_status) %>%
+  summarise(n=n(),
+    mean_CRP = mean(CRP, na.rm=TRUE)) %>%
+  print() 
+
+```
+
+
+
+

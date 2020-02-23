@@ -1,0 +1,98 @@
+---
+title: "Testing with FC Data"
+output:
+  html_notebook:
+    toc: yes
+    toc_float: yes
+date: "July 20, 2019"
+---
+
+Here we extract predictor and response variables, conduct necessary preprocessing and discretization as in the exact same manner as in the training cohort.
+
+```{r, echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+# location of processed data
+processed_data_loc <- "/Users/burook/Desktop/PGM_for_PTSD/data"
+
+```
+
+## Extract and prepare relevant variables
+
+Extract relevant variables for PGM model testing (six predictor variables and PTSD status).
+```{r}
+FC_data_for_PGM <- read_delim(file.path(processed_data_loc, "FC_data_for_PGM.txt"),
+                             col_names = TRUE, delim = "\t");
+
+data2_fc <- FC_data_for_PGM %>% 
+  # we have to rename some of the predictor variables so as they would have consistant with the names in the model
+  mutate(DemoEdu = EDUCATION_LEVEL) %>% 
+  mutate(hscrp = CRP) %>% 
+  mutate(Waist_to_Hip_Ratio = WHR) %>% 
+  mutate(ETISR_Total = CTQ_total_abuse_score) %>% 
+  # now select the relevant variables
+  subset(select=c("PTSD_status", "ETISR_Total", "BMI", "Waist_to_Hip_Ratio", "hscrp", "prs", "DemoEdu")) %>% 
+  print()
+
+```
+
+## Discretization
+
+Discretization has to be done in the same manner as in the training cohort.
+```{r}
+require(arules)   # a package for discretization
+# ETISR_Total (Childhood Adversity, CA)
+hist(data2_fc$ETISR_Total); 
+data2_fc$ETISR_Total <- as.numeric(cut(data2_fc$ETISR_Total, breaks = c(0,20,56), include.lowest=T))
+table(data2_fc$ETISR_Total)
+```
+
+```{r}
+# DemoEdu (Educational Attainment, EA)
+hist(data2_fc$DemoEdu); 
+data2_fc$DemoEdu <- as.numeric(cut(data2_fc$DemoEdu, breaks = c(0,3,6), include.lowest=T))
+table(data2_fc$DemoEdu)
+```
+
+```{r}
+# PRS (Polygenic Risk Score)
+hist(data2_fc$prs);
+data2_fc$prs <- as.numeric(cut(data2_fc$prs, breaks = quantile(data2_fc$prs, probs = seq(0, 1, 1/2), na.rm=T), include.lowest=T))
+table(data2_fc$prs)
+```
+
+```{r}
+# BMI (Body Mass Index)
+hist(data2_fc$BMI); 
+data2_fc$BMI <- as.numeric(cut(data2_fc$BMI, breaks = quantile(data2_fc$BMI, probs = seq(0, 1, 1/2),na.rm=T), include.lowest=T)) # equal frequency binning
+#data2_fc$BMI <- as.numeric(cut(data1$BMI, breaks = c(0,25,50), include.lowest=T))  # I(BMI>25), i.e. obese or not
+table(data2_fc$BMI)
+```
+
+```{r}
+# Waist_to_Hip_Ratio (WHR)
+hist(data2_fc$Waist_to_Hip_Ratio); 
+data2_fc$Waist_to_Hip_Ratio <- as.numeric(cut(data2_fc$Waist_to_Hip_Ratio, breaks = quantile(data2_fc$Waist_to_Hip_Ratio, probs = seq(0, 1, 1/2),na.rm=T), include.lowest=T)) # equal frequency binning
+#data2_fc$Waist_to_Hip_Ratio <- as.numeric(cut(data1$Waist_to_Hip_Ratio, breaks = c(0,1,5), include.lowest=T))  # I(ratio>1), i.e. obese or not
+table(data2_fc$Waist_to_Hip_Ratio)
+```
+
+```{r}
+# hscrp (CRP blood concentration)
+hist(data2_fc$hscrp); 
+data2_fc$hscrp <- as.numeric(cut(data2_fc$hscrp, breaks = quantile(data2_fc$hscrp, probs = seq(0, 1, 1/2), na.rm=T), include.lowest=T))
+table(data2_fc$hscrp)
+```
+
+```{r}
+## now let's relabel variables as 'high' and 'low'
+data2_fc <- discretizeDF(data2_fc, default = list(method = "interval", breaks = 2, labels = c("low", "high")))
+```
+
+## Testing performance on the FC data
+
+```{r}
+compute_performance(net2c, data2_fc)
+
+```
+
+
+
